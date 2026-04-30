@@ -1,0 +1,39 @@
+{
+  "_version": "v3.5",
+  "_description": "倒卖评分算法配置文件 — 修改后重启 Streamlit 看板生效",
+
+  "weights": {
+    "vol_score_max": 20,
+    "profit_score_max": 25,
+    "limit_score_max": 10,
+    "tax_score_max": 10,
+    "roc_score_max": 35,
+    "vol_penalty": 20,
+    "volume_balance_max_penalty": 20
+  },
+
+  "bins": {
+    "vol":        [-1, 0, 50, 500, 5000, 50000, "inf"],
+    "vol_labels": [0, 5, 10, 15, 18, 20],
+
+    "limit":        [-1, 0, 10, 100, 1000, "inf"],
+    "limit_labels": [0, 2, 5, 8, 10],
+
+    "tax":        [-1, 0, 100, 500, 2000, 10000, "inf"],
+    "tax_labels": [0, 2, 5, 8, 10, 10],
+
+    "roc":        [-1, 0.5, 1, 1.5, 2, 3, 5, 8, "inf"],
+    "roc_labels": [0, 2, 6, 10, 15, 22, 28, 35],
+
+    "profit_sweet_spot": [2, 8]
+  },
+
+  "thresholds": {
+    "grade_aplus": 70,
+    "grade_a": 55,
+    "grade_b": 40,
+    "grade_c": 25,
+    "negative_profit_cap": 25,
+    "min_profit_for_aplus": 50
+  }
+}

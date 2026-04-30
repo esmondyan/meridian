@@ -1,0 +1,66 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# ── Virtual environments ──
+venv/
+.venv/
+env/
+
+# ── Databases & data (large files) ──
+*.db
+*.sqlite
+*.csv
+data/
+!data/.gitkeep
+
+# ── Sensitive ──
+.env
+*.pem
+*.key
+feishu.json
+*_secret*
+credentials*
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+
+# ── Streamlit ──
+.streamlit/
+
+# ── Logs ──
+*.log
+logs/
+
+# ── Cron / temp scripts ──
+_cron_*.py
+_run_*.py
+_cleanup_*.py
+_daily_*.py
+_analyze_*.py
+_summary*.py
+_test_*.py
+/run_collect.py
+/run_osrs_collect.py
+.cron_collect.py
+
+# ── Test artifacts ──
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Papertrade / trial data ──
+papertrades/
