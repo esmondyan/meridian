@@ -132,6 +132,21 @@ class PaperTrader:
         if path.exists():
             df = pd.read_csv(path)
             for _, row in df.iterrows():
+                def _clean_bool(v):
+                    if pd.isna(v) or v == "":
+                        return None
+                    return bool(v)
+
+                def _clean_float(v):
+                    if pd.isna(v) or v == "":
+                        return None
+                    return float(v)
+
+                def _clean_str(v):
+                    if pd.isna(v) or v == "":
+                        return None
+                    return str(v)
+
                 self._records.append(PaperTradeRecord(
                     proposal_id=row["proposal_id"],
                     item_name=row["item_name"],
@@ -143,15 +158,15 @@ class PaperTrader:
                     estimated_profit=float(row["estimated_profit"]),
                     estimated_roc=float(row["estimated_roc"]),
                     created_at=row["created_at"],
-                    actual_best_buy=row.get("actual_best_buy"),
-                    actual_best_sell=row.get("actual_best_sell"),
-                    actual_spread_ratio=row.get("actual_spread_ratio"),
-                    actual_buy_vol=row.get("actual_buy_vol"),
-                    actual_sell_vol=row.get("actual_sell_vol"),
-                    buy_filled=row.get("buy_filled"),
-                    sell_filled=row.get("sell_filled"),
-                    actual_profit=row.get("actual_profit"),
-                    checked_at=row.get("checked_at"),
+                    actual_best_buy=_clean_float(row.get("actual_best_buy")),
+                    actual_best_sell=_clean_float(row.get("actual_best_sell")),
+                    actual_spread_ratio=_clean_float(row.get("actual_spread_ratio")),
+                    actual_buy_vol=_clean_float(row.get("actual_buy_vol")),
+                    actual_sell_vol=_clean_float(row.get("actual_sell_vol")),
+                    buy_filled=_clean_bool(row.get("buy_filled")),
+                    sell_filled=_clean_bool(row.get("sell_filled")),
+                    actual_profit=_clean_float(row.get("actual_profit")),
+                    checked_at=_clean_str(row.get("checked_at")),
                 ))
 
     def _save(self):
@@ -174,9 +189,9 @@ class PaperTrader:
                 "actual_spread_ratio": r.actual_spread_ratio or "",
                 "actual_buy_vol": r.actual_buy_vol or "",
                 "actual_sell_vol": r.actual_sell_vol or "",
-                "buy_filled": r.buy_filled or "",
-                "sell_filled": r.sell_filled or "",
-                "actual_profit": r.actual_profit or "",
+                "buy_filled": "" if r.buy_filled is None else r.buy_filled,
+                "sell_filled": "" if r.sell_filled is None else r.sell_filled,
+                "actual_profit": "" if r.actual_profit is None else r.actual_profit,
                 "checked_at": r.checked_at or "",
             })
         pd.DataFrame(rows).to_csv(self._path(), index=False)
@@ -247,21 +262,16 @@ class PaperTrader:
         """准确率报告"""
         done = self.completed
         if not done:
-            return {"total": 0, "filled": 0, "missed": 0, "rate": 0}
+            return {"total": 0, "filled": 0, "missed": 0, "fill_rate": 0}
 
-        filled = sum(1 for r in done if r.buy_filled)
+        filled = sum(1 for r in done if r.buy_filled is True)
+        fill_rate = filled / len(done) * 100 if done else 0
         return {
             "total": len(done),
             "filled": filled,
             "missed": len(done) - filled,
-            "fill_rate": 0,
+            "fill_rate": fill_rate,
         }
-        if done:
-            filled = sum(1 for r in done if r.buy_filled)
-            result["filled"] = filled
-            result["missed"] = len(done) - filled
-            result["fill_rate"] = filled / len(done) * 100
-        return result
 
     def summary(self) -> str:
         """人类可读的摘要"""

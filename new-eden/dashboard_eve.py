@@ -17,7 +17,7 @@ from trade_engine.strategy import StrategyEngine, StrategyConfig
 from trade_engine.proposal import TradeProposal
 from trade_engine.evaluator import run_committee, create_standard_committee
 from trade_engine.consensus import ConsensusEngine
-from eve_storage import get_latest, get_stats, get_cross_region_arb, get_item_across_regions
+from eve_storage import get_latest, get_stats, get_cross_region_arb, get_item_across_regions, get_price_history
 
 from auth.eve_sso import EveSSO, EveSSOConfig, list_tokens, delete_token
 
@@ -587,6 +587,86 @@ if mode == "市场浏览":
                         f"卖 ({fmt(sell_max_row['best_sell'])})  "
                         f"≈ 税后利润 **{fmt(arb_profit_after)} ISK**"
                     )
+
+                # --- 价格历史趋势图 ---
+                with st.expander("📈 价格历史趋势", expanded=False):
+                    hist_region = st.selectbox(
+                        "选择区域",
+                        ["全部区域"] + [REGION_LABELS.get(r, r.capitalize()) for r in cross["region"]],
+                        key="hist_region_select",
+                    )
+                    hist_days = st.slider("回溯天数", 1, 30, 7, key="hist_days")
+
+                    region_param = None if hist_region == "全部区域" else \
+                        {v: k for k, v in REGION_LABELS.items()}.get(hist_region, hist_region.lower())
+
+                    hist_df = get_price_history(
+                        type_id=st.session_state.detail_type_id,
+                        region=region_param,
+                        days=hist_days,
+                    )
+
+                    if hist_df is not None and len(hist_df) > 0:
+                        hist_df["collected_at"] = pd.to_datetime(hist_df["collected_at"])
+
+                        fig2 = go.Figure()
+
+                        if region_param:
+                            fig2.add_trace(go.Scatter(
+                                x=hist_df["collected_at"], y=hist_df["best_buy"],
+                                name="买价(最高)", line=dict(color="#4CAF50"), mode="lines+markers",
+                            ))
+                            fig2.add_trace(go.Scatter(
+                                x=hist_df["collected_at"], y=hist_df["best_sell"],
+                                name="卖价(最低)", line=dict(color="#FF5722"), mode="lines+markers",
+                            ))
+                            fig2.update_layout(
+                                title=f"{item_name} — {hist_region} 价格走势",
+                                yaxis_title="价格 (ISK)",
+                                hovermode="x unified",
+                                height=400,
+                            )
+                        else:
+                            colors = ["#4CAF50", "#2196F3", "#FF9800", "#9C27B0", "#607D8B"]
+                            for i, (region_name, grp) in enumerate(hist_df.groupby("region")):
+                                label = REGION_LABELS.get(region_name, region_name.capitalize())
+                                fig2.add_trace(go.Scatter(
+                                    x=grp["collected_at"], y=grp["best_buy"],
+                                    name=f"{label} 买价",
+                                    line=dict(color=colors[i % len(colors)], dash="dash"),
+                                    mode="lines+markers",
+                                ))
+                                fig2.add_trace(go.Scatter(
+                                    x=grp["collected_at"], y=grp["best_sell"],
+                                    name=f"{label} 卖价",
+                                    line=dict(color=colors[i % len(colors)]),
+                                    mode="lines+markers",
+                                ))
+                            fig2.update_layout(
+                                title=f"{item_name} — 全区域价格走势",
+                                yaxis_title="价格 (ISK)",
+                                hovermode="x unified",
+                                height=450,
+                            )
+
+                        fig2.update_xaxes(title="时间")
+                        fig2.update_yaxes(tickformat=",.0f")
+                        st.plotly_chart(fig2, use_container_width=True)
+
+                        # 价差比趋势
+                        fig3 = px.line(
+                            hist_df, x="collected_at", y="spread_ratio",
+                            color="region" if not region_param else None,
+                            title=f"{item_name} — 价差比走势",
+                            labels={"collected_at": "时间", "spread_ratio": "价差比(%)",
+                                    "region": "区域"},
+                            markers=True,
+                        )
+                        fig3.update_layout(height=300, hovermode="x unified")
+                        fig3.update_yaxes(tickformat=".1f", ticksuffix="%")
+                        st.plotly_chart(fig3, use_container_width=True)
+                    else:
+                        st.info("暂无价格历史数据。数据将在下次采集后开始积累。")
 
 
 # ============================

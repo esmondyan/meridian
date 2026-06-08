@@ -13,13 +13,15 @@ OSRS Grand Exchange 价格采集器
 - volume_buy:  5 分钟内买盘成交量
 - volume_sell: 5 分钟内卖盘成交量
 - is_member: 是否为会员专属物品
+
+注意：从中国 ECS 访问需要 proxychains 绕过 Cloudflare 防护。
 """
 
 import json
+import subprocess
 import time
 from datetime import datetime
 
-import requests
 import pandas as pd
 
 from config.settings import (
@@ -28,19 +30,32 @@ from config.settings import (
 )
 
 
+def _curl(url: str) -> dict:
+    """通过 proxychains + curl 获取 JSON（绕过 Cloudflare）"""
+    result = subprocess.run(
+        ["proxychains4", "-q", "curl", "-s", "--max-time", "30",
+         "-H", f"User-Agent: {OSRS_USER_AGENT}",
+         url],
+        capture_output=True, text=True, timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"curl failed (exit {result.returncode}): {result.stderr}")
+    if not result.stdout.strip():
+        raise RuntimeError(f"curl returned empty response from {url}")
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"JSON parse error for {url}: {e}\nResponse: {result.stdout[:300]}")
+
+
 def fetch_mapping() -> dict:
     """获取物品 ID → 名称、限购量、会员标志"""
-    resp = requests.get(
-        OSRS_MAPPING_API,
-        headers={"User-Agent": OSRS_USER_AGENT}
-    )
-    resp.raise_for_status()
-    items = resp.json()
+    items = _curl(OSRS_MAPPING_API)
     result = {}
     for item in items:
         result[item["id"]] = {
             "name": item["name"],
-            "buy_limit": item.get("limit", 0),     # GE 每 4h 限购
+            "buy_limit": item.get("limit", 0),      # GE 每 4h 限购
             "is_member": item.get("members", True),  # 会员专属
         }
     return result
@@ -48,22 +63,12 @@ def fetch_mapping() -> dict:
 
 def fetch_latest_prices() -> dict:
     """获取所有物品的最新价格"""
-    resp = requests.get(
-        OSRS_GE_API,
-        headers={"User-Agent": OSRS_USER_AGENT}
-    )
-    resp.raise_for_status()
-    return resp.json()["data"]
+    return _curl(OSRS_GE_API)["data"]
 
 
 def fetch_volume_data() -> dict:
     """获取 5 分钟交易量"""
-    resp = requests.get(
-        OSRS_5M_API,
-        headers={"User-Agent": OSRS_USER_AGENT}
-    )
-    resp.raise_for_status()
-    return resp.json()["data"]
+    return _curl(OSRS_5M_API)["data"]
 
 
 def build_price_df() -> pd.DataFrame:
@@ -113,7 +118,6 @@ def build_price_df() -> pd.DataFrame:
 
 def save_prices(df: pd.DataFrame):
     """保存到 SQLite"""
-    # SQLite（更快查询）
     try:
         from src.storage.db import init_db, insert_snapshot
         init_db()

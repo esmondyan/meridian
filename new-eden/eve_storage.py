@@ -28,7 +28,7 @@ def init_db():
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS station_snapshots (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                region      TEXT NOT NULL,       -- jita, amarr, dodixie, rens, hek
+                region      TEXT NOT NULL,
                 type_id     INTEGER NOT NULL,
                 name        TEXT NOT NULL,
                 best_buy    REAL,
@@ -47,17 +47,36 @@ def init_db():
                 collected_at TEXT NOT NULL
             );
 
-            -- 按区域查
+            -- 价格历史表（追加，不删除）
+            CREATE TABLE IF NOT EXISTS price_history (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                type_id     INTEGER NOT NULL,
+                name        TEXT NOT NULL,
+                region      TEXT NOT NULL,
+                best_buy    REAL,
+                best_sell   REAL,
+                bid_ask_spread    REAL,
+                spread_ratio      REAL,
+                best_buy_vol      INTEGER,
+                best_sell_vol     INTEGER,
+                collected_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_region
                 ON station_snapshots(region, collected_at);
 
-            -- 按物品查（跨区比价用）
             CREATE INDEX IF NOT EXISTS idx_type_id
                 ON station_snapshots(type_id, region);
 
-            -- 按时间范围查
             CREATE INDEX IF NOT EXISTS idx_collected
                 ON station_snapshots(collected_at);
+
+            -- 价格历史索引
+            CREATE INDEX IF NOT EXISTS idx_history_item
+                ON price_history(type_id, region, collected_at);
+
+            CREATE INDEX IF NOT EXISTS idx_history_time
+                ON price_history(collected_at);
 
             PRAGMA busy_timeout = 5000;
         """)
@@ -75,6 +94,20 @@ def import_csv(region: str, csv_path: str | Path) -> int:
     with get_conn() as conn:
         conn.execute("DELETE FROM station_snapshots WHERE region = ?", (region,))
         df.to_sql("station_snapshots", conn, if_exists="append", index=False)
+
+        # 追加到价格历史表（保留最近 90 天）
+        hist_cols = ["type_id", "name", "region", "best_buy", "best_sell",
+                     "bid_ask_spread", "spread_ratio", "best_buy_vol", "best_sell_vol"]
+        hist = df[hist_cols].copy()
+        hist["collected_at"] = now
+        hist.to_sql("price_history", conn, if_exists="append", index=False)
+
+        # 清理 90 天前的旧数据
+        cutoff = (datetime.now().timestamp() - 90 * 86400)
+        conn.execute(
+            "DELETE FROM price_history WHERE collected_at < datetime(?, 'unixepoch')",
+            (cutoff,)
+        )
 
     return len(df)
 
@@ -194,14 +227,12 @@ def get_item_across_regions(type_id: int = None, name_query: str = None) -> pd.D
             """
             return pd.read_sql_query(sql, conn, params=(type_id,))
         elif name_query:
-            # 先找到匹配的物品 type_id（去重），再查全量
             lookups = pd.read_sql_query("""
                 SELECT DISTINCT type_id, name FROM station_snapshots
                 WHERE name LIKE ? LIMIT 20
             """, conn, params=(f"%{name_query}%",))
             if len(lookups) == 0:
                 return pd.DataFrame()
-            # 查第一个匹配物品的跨站数据
             tid = lookups.iloc[0]["type_id"]
             df = pd.read_sql_query("""
                 SELECT s.* FROM station_snapshots s
@@ -212,9 +243,43 @@ def get_item_across_regions(type_id: int = None, name_query: str = None) -> pd.D
                 WHERE s.type_id = ?
                 ORDER BY s.region
             """, conn, params=(tid,))
-            df.attrs["lookups"] = lookups  # 存搜索结果供 UI 选择
+            df.attrs["lookups"] = lookups
             return df
     return pd.DataFrame()
+
+
+def get_price_history(type_id: int, region: str = None, days: int = 7) -> pd.DataFrame:
+    """获取物品的价格历史数据，用于趋势图
+
+    Args:
+        type_id: 物品 ID
+        region: 区域，默认查全部区域
+        days: 回溯天数
+
+    Returns:
+        DataFrame with columns: collected_at, region, best_buy, best_sell, spread_ratio
+    """
+    with get_conn() as conn:
+        if region:
+            sql = """
+                SELECT collected_at, region, best_buy, best_sell,
+                       bid_ask_spread, spread_ratio, best_buy_vol, best_sell_vol
+                FROM price_history
+                WHERE type_id = ? AND region = ?
+                  AND collected_at >= datetime('now', ? || ' days')
+                ORDER BY collected_at ASC
+            """
+            return pd.read_sql_query(sql, conn, params=(type_id, region, f"-{days}"))
+        else:
+            sql = """
+                SELECT collected_at, region, best_buy, best_sell,
+                       bid_ask_spread, spread_ratio, best_buy_vol, best_sell_vol
+                FROM price_history
+                WHERE type_id = ?
+                  AND collected_at >= datetime('now', ? || ' days')
+                ORDER BY region, collected_at ASC
+            """
+            return pd.read_sql_query(sql, conn, params=(type_id, f"-{days}"))
 
 
 def merge_all_csvs():

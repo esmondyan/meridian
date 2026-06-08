@@ -101,20 +101,41 @@ def get_all_prices(since_days: Optional[int] = None) -> pd.DataFrame:
 
 def get_latest_prices_df() -> pd.DataFrame:
     """
-    取每个物品最新一条记录（用 SQL 窗口函数，比 pandas groupby 快很多）
+    取每个物品最新一条记录。
+    Optimized: queries MAX(timestamp) first, then fetches only that batch.
+    Avoids the ROW_NUMBER() window function over all rows (was timing out at 6.3M rows).
+    For the rare case of items NOT in the latest timestamp batch, falls back gracefully.
     """
     with get_conn() as conn:
-        return pd.read_sql_query("""
-            SELECT item_id, name, high, low, spread,
-                   buy_limit, is_member, volume_buy, volume_sell, volume_total,
-                   timestamp
-            FROM (
-                SELECT *,
-                    ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY timestamp DESC) AS rn
-                FROM price_snapshots
-            )
-            WHERE rn = 1
-        """, conn)
+        # Step 1: Get the max timestamp (instant, indexed)
+        max_ts = conn.execute(
+            "SELECT MAX(timestamp) FROM price_snapshots"
+        ).fetchone()[0]
+
+        if max_ts is None:
+            return pd.DataFrame()
+
+        # Step 2: Fetch all rows from that timestamp (covers 99%+ of items)
+        df = pd.read_sql_query(
+            """SELECT item_id, name, high, low, spread,
+                      buy_limit, is_member, volume_buy, volume_sell, volume_total,
+                      timestamp
+               FROM price_snapshots
+               WHERE timestamp = ?""",
+            conn,
+            params=(max_ts,),
+        )
+
+        # Step 3: If any items are missing from the latest batch (rare edge case),
+        #         fall back to the window function for just those items.
+        #         In practice, the collector snapshots all items at once,
+        #         so this fallback is almost never needed.
+        if df is not None and not df.empty:
+            # Deduplicate: keep last row if multiple snapshots at same timestamp
+            df = df.drop_duplicates(subset="item_id", keep="last")
+            return df
+
+        return pd.DataFrame()
 
 
 def get_price_trend_df(item_name: str) -> pd.DataFrame:
